@@ -3,6 +3,7 @@ package com.example.documentreader
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -14,17 +15,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -34,15 +35,15 @@ import androidx.lifecycle.LifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.text.SimpleDateFormat
-import java.util.Locale
+import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-
 
 private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
 
@@ -71,35 +72,44 @@ fun ScanScreen() {
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted: Boolean ->
             if (isGranted) {
-                startCamera(cameraProviderFuture, lifecycleOwner, context) { capture ->
-                    imageCapture = capture
-                }
+                Log.d("ScanScreen", "Permission granted")
             } else {
+                Log.e("ScanScreen", "Permission denied")
                 Toast.makeText(context, "Izin kamera diperlukan.", Toast.LENGTH_SHORT).show()
             }
         }
     )
 
     LaunchedEffect(key1 = true) {
-        if (ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            startCamera(cameraProviderFuture, lifecycleOwner, context) { capture ->
-                imageCapture = capture
-            }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            Log.d("ScanScreen", "Permission already granted, initializing camera")
         } else {
+            Log.d("ScanScreen", "Requesting camera permission")
             launcher.launch(Manifest.permission.CAMERA)
         }
     }
 
-    // Menggunakan LaunchedEffect untuk menjalankan OCR setelah gambar diambil
     imageUri?.let { imgUri ->
         LaunchedEffect(imgUri) {
-            processImage(context, imgUri) { result ->
-                // Handle OCR result here (e.g., display it)
-                Toast.makeText(context, "OCR Result: $result", Toast.LENGTH_LONG).show()
+            Log.d("ScanScreen", "Image captured: $imgUri")
+            try {
+                val resultText = processImage(context, imgUri)
+                Log.d("ScanScreen", "OCR result: $resultText")
+                val isKTP = determineIfKTP(resultText)
+                val data = extractData(resultText, isKTP)
+
+                val intent = Intent(context, ResultActivity::class.java).apply {
+                    putExtra("IS_KTP", isKTP)
+                    putExtra("IMAGE_URI", imgUri.toString())
+                    if (isKTP) {
+                        putExtra("KTP_DATA", data as KTPData)
+                    } else {
+                        putExtra("PASSPORT_DATA", data as PassportData)
+                    }
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("ScanScreen", "Error processing image", e)
             }
         }
     }
@@ -118,32 +128,29 @@ fun ScanScreen() {
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
                         }
-                        val preview = Preview.Builder().build()
-                        var imageCapture = ImageCapture.Builder().build()
-
-                        cameraProviderFuture.addListener({
-                            val cameraProvider = cameraProviderFuture.get()
-                            try {
-                                cameraProvider.unbindAll()
-                                cameraProvider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    CameraSelector.DEFAULT_BACK_CAMERA,
-                                    preview,
-                                    imageCapture
-                                )
-                                preview.setSurfaceProvider(previewView.surfaceProvider)
-                                imageCapture = imageCapture // Set the imageCapture here
-                            } catch (e: Exception) {
-                                Log.e("CameraPreview", "Error starting camera", e)
-                                Toast.makeText(context, "Error starting camera", Toast.LENGTH_SHORT).show()
-                            }
-                        }, ContextCompat.getMainExecutor(context))
+                        startCamera(cameraProviderFuture, lifecycleOwner, previewView) { capture ->
+                            imageCapture = capture
+                        }
                         previewView
                     },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp)
-                )
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 300.dp, height = 188.dp)
+                            .border(2.dp, MaterialTheme.colorScheme.primary)
+                            .background(Color.Transparent)
+                            .padding(8.dp)
+                            .border(2.dp, Color.White)  // Garis tambahan untuk kontras
+                    )
+                }
 
                 Button(
                     onClick = {
@@ -154,9 +161,11 @@ fun ScanScreen() {
                                 cameraExecutor,
                                 context
                             ) { uri ->
-                                imageUri = uri // Update imageUri state after capturing
+                                Log.d("ScanScreen", "Photo taken successfully: $uri")
+                                imageUri = uri
                             }
                         } ?: run {
+                            Log.e("ScanScreen", "Image capture not initialized")
                             Toast.makeText(context, "Image capture not initialized", Toast.LENGTH_SHORT).show()
                         }
                     },
@@ -172,30 +181,35 @@ fun ScanScreen() {
 private fun startCamera(
     cameraProviderFuture: ListenableFuture<ProcessCameraProvider>,
     lifecycleOwner: LifecycleOwner,
-    context: Context,
+    previewView: PreviewView,
     onImageCapture: (ImageCapture) -> Unit
 ) {
     cameraProviderFuture.addListener({
-        val cameraProvider = cameraProviderFuture.get()
-        val preview = Preview.Builder().build()
-        val imageCapture = ImageCapture.Builder().build()
-
         try {
+            val cameraProvider = cameraProviderFuture.get()
+            // Configure preview and image capture
+            val preview = Preview.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .build()
+
+            val imageCapture = ImageCapture.Builder()
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .build()
             cameraProvider.unbindAll()
-            Log.d("CameraPreview", "Binding to lifecycle")
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_BACK_CAMERA,
                 preview,
                 imageCapture
             )
-            Log.d("CameraPreview", "Camera bound to lifecycle")
+            preview.setSurfaceProvider(previewView.surfaceProvider)
             onImageCapture(imageCapture)
+            Log.d("CameraPreview", "Camera initialized successfully")
         } catch (e: Exception) {
-            Log.e("CameraPreview", "Error: ${e.message}")
-            Toast.makeText(context, "Error starting camera", Toast.LENGTH_SHORT).show()
+            Log.e("CameraPreview", "Error starting camera", e)
+            Toast.makeText(previewView.context, "Error starting camera", Toast.LENGTH_SHORT).show()
         }
-    }, ContextCompat.getMainExecutor(context))
+    }, ContextCompat.getMainExecutor(previewView.context))
 }
 
 private fun takePhoto(
@@ -228,28 +242,76 @@ private fun takePhoto(
     )
 }
 
-private suspend fun processImage(context: Context, imageUri: Uri, onResult: (String) -> Unit) {
-    withContext(Dispatchers.IO) {
-        // Create a TextRecognizer instance with options
-        val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+private suspend fun processImage(context: Context, imageUri: Uri): String = withContext(Dispatchers.IO) {
+    val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-        val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
-        val bitmap = BitmapFactory.decodeStream(inputStream)
+    val inputStream: InputStream? = context.contentResolver.openInputStream(imageUri)
+    val bitmap = BitmapFactory.decodeStream(inputStream)
 
-        if (bitmap != null) {
-            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
-            textRecognizer.process(image)
-                .addOnSuccessListener { visionText ->
-                    val resultText = visionText.text
-                    onResult(resultText)
-                }
-                .addOnFailureListener { e ->
-                    Log.e("OCR", "Failed to recognize text", e)
-                    onResult("Error: ${e.message}")
-                }
-        } else {
-            Log.e("OCR", "Failed to decode bitmap")
-            onResult("Error: Failed to decode image")
+    // Langsung menggunakan bitmap tanpa preprocess
+    val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+    val result = CompletableDeferred<String>()
+
+    textRecognizer.process(image)
+        .addOnSuccessListener { visionText ->
+            val cleanedText = cleanOCRText(visionText.text)
+            result.complete(cleanedText)
         }
+        .addOnFailureListener { e ->
+            Log.e("OCR", "Failed to recognize text", e)
+            result.complete("Error: ${e.message}")
+        }
+
+    result.await()
+}
+
+private fun cleanOCRText(resultText: String): String {
+    return resultText
+        .replace(Regex("\\s+"), " ")  // Replace multiple spaces with single space
+        .trim()  // Remove leading and trailing spaces
+}
+
+private fun determineIfKTP(resultText: String): Boolean {
+    return resultText.contains("NIK") && resultText.contains("Alamat")
+}
+
+private fun extractData(resultText: String, isKTP: Boolean): Any {
+    val nik = extractField(resultText, "NIK")
+    val nama = extractField(resultText, "Nama")
+    val tanggalLahir = extractField(resultText, "Tanggal Lahir")
+    val alamatLengkap = extractField(resultText, "Alamat Lengkap")
+    val rtRw = extractField(resultText, "RT/RW")
+    val provinsi = extractField(resultText, "Provinsi")
+    val kotaKabupaten = extractField(resultText, "Kota/Kabupaten")
+    val kecamatan = extractField(resultText, "Kecamatan")
+    val kelurahan = extractField(resultText, "Kelurahan")
+
+    return if (isKTP) {
+        KTPData(
+            nik = nik,
+            nama = nama,
+            tanggalLahir = tanggalLahir,
+            alamatLengkap = alamatLengkap,
+            rtRw = rtRw,
+            provinsi = provinsi,
+            kotaKabupaten = kotaKabupaten,
+            kecamatan = kecamatan,
+            kelurahan = kelurahan
+        )
+    } else {
+        PassportData(
+            nama = nama,
+            tanggalLahir = tanggalLahir,
+            issuedDate = extractField(resultText, "Issued Date"),
+            expiredDate = extractField(resultText, "Expired Date"),
+            nomorPassport = extractField(resultText, "Nomor Passport"),
+            kodeNegara = extractField(resultText, "Kode Negara")
+        )
     }
+}
+
+private fun extractField(resultText: String, fieldName: String): String {
+    val regex = Regex("$fieldName[:\\s]*(\\d+|.*)", RegexOption.IGNORE_CASE) // Sesuaikan pola regex
+    val match = regex.find(resultText)
+    return match?.groups?.get(1)?.value?.trim() ?: "Not found"
 }
