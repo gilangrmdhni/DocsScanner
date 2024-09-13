@@ -22,7 +22,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
-data class OCRResult(
+// Data class for KTP result
+data class OCRResultKTP(
     val id: String = "Data tidak tersedia",
     val name: String = "Data tidak tersedia",
     val birthdate: String = "Data tidak tersedia",
@@ -34,29 +35,49 @@ data class OCRResult(
     val kelurahan: String = "Data tidak tersedia"
 )
 
-fun parseOCRResult(resultJsonString: String): OCRResult {
-    return try {
-        // Parse outer JSON
-        val outerJson = JSONObject(resultJsonString)
-        // Extract inner JSON string
-        val innerJsonString = outerJson.optString("result", "{}")
-        // Parse inner JSON
-        val jsonResult = JSONObject(innerJsonString)
+// Data class for Passport result
+data class OCRResultPassport(
+    val fullName: String = "Data tidak tersedia",
+    val documentNumber: String = "Data tidak tersedia",
+    val birthDate: String = "Data tidak tersedia",
+    val countryFullName: String = "Data tidak tersedia"
+)
 
-        OCRResult(
-            id = jsonResult.optString("id", "Data tidak tersedia"),
-            name = jsonResult.optString("name", "Data tidak tersedia"),
-            birthdate = jsonResult.optString("birthdate", "Data tidak tersedia"),
-            address = jsonResult.optString("address", "Data tidak tersedia"),
-            rtRw = jsonResult.optString("RT/RW", "Data tidak tersedia"),
-            province = jsonResult.optString("province", "Data tidak tersedia"),
-            city = jsonResult.optString("city", "Data tidak tersedia"),
-            kecamatan = jsonResult.optString("kecamatan", "Data tidak tersedia"),
-            kelurahan = jsonResult.optString("kelurahan", "Data tidak tersedia")
-        )
+// Function to parse OCR result from JSON
+fun parseOCRResult(resultJsonString: String, isKTP: Boolean): Any {
+    return try {
+        Log.d("parseOCRResult", "Parsing JSON: $resultJsonString")
+        val outerJson = JSONObject(resultJsonString)
+        val encodedInnerJsonString = outerJson.optString("result", "{}")
+        val cleanedInnerJsonString = encodedInnerJsonString.replace("\\n", "").trim()
+        Log.d("parseOCRResult", "Cleaned Inner JSON: $cleanedInnerJsonString")
+
+        val innerJsonString = JSONObject(cleanedInnerJsonString)
+        Log.d("parseOCRResult", "Decoded Inner JSON: $innerJsonString")
+
+        if (isKTP) {
+            OCRResultKTP(
+                id = innerJsonString.optString("id", "Data tidak tersedia"),
+                name = innerJsonString.optString("name", "Data tidak tersedia"),
+                birthdate = innerJsonString.optString("birthdate", "Data tidak tersedia"),
+                address = innerJsonString.optString("address", "Data tidak tersedia"),
+                rtRw = innerJsonString.optString("RT/RW", "Data tidak tersedia"),
+                province = innerJsonString.optString("province", "Data tidak tersedia"),
+                city = innerJsonString.optString("city", "Data tidak tersedia"),
+                kecamatan = innerJsonString.optString("kecamatan", "Data tidak tersedia"),
+                kelurahan = innerJsonString.optString("kelurahan", "Data tidak tersedia")
+            )
+        } else {
+            OCRResultPassport(
+                fullName = innerJsonString.optString("fullName", "Data tidak tersedia"),
+                documentNumber = innerJsonString.optString("documentNumber", "Data tidak tersedia"),
+                birthDate = innerJsonString.optString("birthDate", "Data tidak tersedia"),
+                countryFullName = innerJsonString.optString("countryFullName", "Data tidak tersedia")
+            )
+        }
     } catch (e: Exception) {
-        Log.e("ResultScreen", "Error parsing JSON", e)
-        OCRResult() // Return default values in case of error
+        Log.e("parseOCRResult", "Error parsing JSON", e)
+        if (isKTP) OCRResultKTP() else OCRResultPassport()
     }
 }
 
@@ -74,15 +95,12 @@ class ResultActivity : ComponentActivity() {
 @Composable
 fun ResultScreen(intent: Intent) {
     val isKtp = intent.getBooleanExtra("IS_KTP", true)
-    val resultJsonString = if (isKtp) {
-        intent.getStringExtra("RESULT_JSON_KTP") ?: "{}"
-    } else {
-        intent.getStringExtra("RESULT_JSON_PASPOR") ?: "{}"
-    }
+    val resultJsonString = intent.getStringExtra("RESULT_JSON") ?: "{}" // Gunakan kunci yang sama
     val imageUri = intent.getStringExtra("IMAGE_URI")?.let { Uri.parse(it) }
 
-    // Parse the JSON result
-    val ocrResult = parseOCRResult(resultJsonString)
+    Log.d("ResultScreen", "Received JSON: $resultJsonString")
+
+    val ocrResult = parseOCRResult(resultJsonString, isKtp)
 
     Scaffold(
         topBar = {
@@ -99,7 +117,6 @@ fun ResultScreen(intent: Intent) {
                 horizontalAlignment = Alignment.Start,
                 verticalArrangement = Arrangement.Top
             ) {
-                // Menampilkan gambar jika ada URI gambar
                 imageUri?.let { uri ->
                     val imageBitmap = BitmapFactory.decodeStream(
                         LocalContext.current.contentResolver.openInputStream(uri)
@@ -118,7 +135,6 @@ fun ResultScreen(intent: Intent) {
                     } ?: Log.d("ResultScreen", "Failed to decode image from URI: $uri")
                 } ?: Log.d("ResultScreen", "No image URI provided")
 
-                // Menampilkan informasi hasil OCR di dalam Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.elevatedCardElevation(8.dp),
@@ -130,32 +146,43 @@ fun ResultScreen(intent: Intent) {
                             .padding(16.dp)
                             .fillMaxWidth()
                     ) {
-                        Text("ID: ${ocrResult.id}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Name: ${ocrResult.name}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Birthdate: ${ocrResult.birthdate}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Address: ${ocrResult.address}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("RT/RW: ${ocrResult.rtRw}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Province: ${ocrResult.province}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("City: ${ocrResult.city}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Kecamatan: ${ocrResult.kecamatan}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Kelurahan: ${ocrResult.kelurahan}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        if (isKtp) {
+                            ocrResult as OCRResultKTP
+                            Text("ID: ${ocrResult.id}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Name: ${ocrResult.name}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Birthdate: ${ocrResult.birthdate}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Address: ${ocrResult.address}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("RT/RW: ${ocrResult.rtRw}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Province: ${ocrResult.province}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("City: ${ocrResult.city}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Kecamatan: ${ocrResult.kecamatan}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Kelurahan: ${ocrResult.kelurahan}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        } else {
+                            ocrResult as OCRResultPassport
+                            Text("Full Name: ${ocrResult.fullName}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Document Number: ${ocrResult.documentNumber}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Birth Date: ${ocrResult.birthDate}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Country: ${ocrResult.countryFullName}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Tombol konfirmasi
                 Button(
                     onClick = {
-                        // Kirim data ke cloud atau lakukan tindakan lainnya
+                        // Handle button click here, e.g., navigate back to home screen
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -168,3 +195,4 @@ fun ResultScreen(intent: Intent) {
         }
     )
 }
+

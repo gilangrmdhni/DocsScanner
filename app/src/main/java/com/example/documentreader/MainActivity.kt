@@ -31,6 +31,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             DocumentReaderApp()
         }
+        val resultJsonString = "{}"
+        val documentType = intent.getStringExtra("DOCUMENT_TYPE") ?: "ID"
+        val resultIntent = Intent(this, ResultActivity::class.java).apply {
+            putExtra("IS_KTP", documentType == "ID")
+            if (documentType == "ID") {
+                putExtra("RESULT_JSON_KTP", resultJsonString)
+            } else {
+                putExtra("RESULT_JSON_PASPOR", resultJsonString)
+            }
+        }
+        startActivity(resultIntent)
     }
 }
 
@@ -73,22 +84,14 @@ fun MainScreen() {
             painter = qrCodeImage,
             contentDescription = "QR Code",
             modifier = Modifier
-                .size(120.dp)
+                .size(200.dp)
                 .padding(bottom = 24.dp)
         )
 
-        Text(
-            text = "Scanned",
-            fontSize = 18.sp,
-            color = MaterialTheme.colorScheme.onBackground,
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier
-                .padding(bottom = 24.dp)
-                .align(Alignment.CenterHorizontally) // Ini memastikan teks diatur ke tengah
-        )
+
 
         ButtonWithIcon(
-            text = "Scan KTP",
+            text = "Scan",
             icon = Icons.Filled.AccountBox,
             color = MaterialTheme.colorScheme.primary,
             onClick = { startScanActivity(context, "ID") }
@@ -96,12 +99,7 @@ fun MainScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        ButtonWithIcon(
-            text = "Scan PASPOR",
-            icon = Icons.Filled.AccountBox,
-            color = MaterialTheme.colorScheme.secondary,
-            onClick = { startScanActivity(context, "PASSPORT") }
-        )
+
     }
 }
 
@@ -116,12 +114,7 @@ fun ButtonWithIcon(text: String, icon: ImageVector, color: Color, onClick: () ->
         colors = ButtonDefaults.buttonColors(containerColor = color),
         shape = RoundedCornerShape(12.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            modifier = Modifier.size(24.dp),
-            tint = Color.White
-        )
+
         Spacer(modifier = Modifier.width(8.dp))
         Text(text = text, color = Color.White, fontSize = 16.sp)
     }
@@ -133,3 +126,5 @@ private fun startScanActivity(context: Context, documentType: String) {
     }
     context.startActivity(intent)
 }
+
+

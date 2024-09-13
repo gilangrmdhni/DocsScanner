@@ -14,19 +14,41 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.*
+import androidx.camera.core.AspectRatio
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -35,24 +57,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.google.android.gms.tasks.Tasks
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
-import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import androidx.compose.material3.*
 
+// Constants
 private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
 private const val API_URL_KTP = "https://uploadktp.panorasnap.com/uploadKtp"
 private const val API_URL_PASPOR = "https://uploadpaspor.panorasnap.com/uploadPaspor"
 
+// ScanActivity class
 class ScanActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +92,7 @@ class ScanActivity : ComponentActivity() {
     }
 }
 
+// ScanScreen Composable function
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,18 +140,26 @@ fun ScanScreen() {
                             inputStream.copyTo(outputStream)
                         }
                     }
-                    val userId = "12345" // Ganti dengan ID pengguna yang sesuai
-                    val (responseKtp, responsePaspor) = sendImageToApis(file, userId)
 
-                    Log.d("ScanScreen", "API responses: KTP: $responseKtp, Paspor: $responsePaspor")
+                    val documentType = detectDocumentType(imgUri, context)
+                    val userId = "12345" // Replace with the actual user ID
 
-                    // Kirim data ke ResultActivity jika ada respons dari salah satu API
-                    if (responseKtp != null || responsePaspor != null) {
+                    val apiUrl = when (documentType) {
+                        "KTP" -> API_URL_KTP
+                        "PASPOR" -> API_URL_PASPOR
+                        else -> null
+                    }
+
+                    val response = apiUrl?.let { sendImageToApi(it, file, userId) }
+
+                    Log.d("ScanScreen", "API response: $response")
+
+                    // Send data to ResultActivity if there's a response from the API
+                    if (response != null) {
                         val intent = Intent(context, ResultActivity::class.java).apply {
-                            putExtra("IS_KTP", responseKtp != null)
+                            putExtra("IS_KTP", documentType == "KTP")
                             putExtra("IMAGE_URI", imgUri.toString())
-                            putExtra("RESULT_JSON_KTP", responseKtp ?: "{}")
-                            putExtra("RESULT_JSON_PASPOR", responsePaspor ?: "{}")
+                            putExtra("RESULT_JSON", response) // Pastikan kunci yang digunakan konsisten
                         }
                         context.startActivity(intent)
                     } else {
@@ -136,9 +175,6 @@ fun ScanScreen() {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("Scan Document") })
-        },
         content = {
             Box(modifier = Modifier.fillMaxSize()) {
                 AndroidView(
@@ -167,10 +203,11 @@ fun ScanScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(3 / 5f) // Ensure aspect ratio matches camera preview
-                            .border(2.dp, MaterialTheme.colorScheme.primary)
+                            .border(2.dp, Color(0xFF8AB4F8)) // Soft blue border
                             .background(Color.Transparent)
                             .padding(8.dp)
                             .border(2.dp, Color.White)  // Extra border for contrast
+                            .shadow(8.dp) // Add shadow for better visibility
                     )
                 }
 
@@ -181,7 +218,10 @@ fun ScanScreen() {
                             .background(Color.Black.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator()
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(80.dp), // Larger indicator
+                            color = Color(0xFF8AB4F8) // Soft blue color for progress indicator
+                        )
                     }
                 }
 
@@ -189,8 +229,8 @@ fun ScanScreen() {
                     modifier = Modifier
                         .align(Alignment.BottomCenter)  // Align button to bottom center
                         .padding(16.dp)
-                        .size(80.dp)
-                        .background(Color.Transparent, shape = CircleShape)
+                        .size(60.dp)
+                        .background(Color(0xFF8AB4F8), shape = CircleShape) // Soft blue background
                         .clickable {
                             if (!isProcessing) {
                                 isProcessing = true
@@ -215,25 +255,18 @@ fun ScanScreen() {
                         }
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.focus), // Ganti dengan ID gambar yang sesuai
+                        painter = painterResource(id = R.drawable.record), // Replace with Kotlin icon
                         contentDescription = "Capture",
                         modifier = Modifier.size(60.dp)
+                        .align(Alignment.BottomCenter)
                     )
                 }
             }
         }
     )
-
-    apiResponse?.let { response ->
-        Text(
-            text = response,
-            modifier = Modifier.padding(16.dp),
-            color = Color.Black
-        )
-    }
 }
 
-
+// Start camera function
 private fun startCamera(
     cameraProviderFuture: ListenableFuture<ProcessCameraProvider>,
     lifecycleOwner: LifecycleOwner,
@@ -243,13 +276,13 @@ private fun startCamera(
     cameraProviderFuture.addListener({
         try {
             val cameraProvider = cameraProviderFuture.get()
-
             val preview = Preview.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_4_3) // Set aspect ratio
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
                 .build()
 
             val imageCapture = ImageCapture.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_4_3) // Set aspect ratio
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY) // Optimize for speed
                 .build()
 
             cameraProvider.unbindAll()
@@ -269,6 +302,7 @@ private fun startCamera(
     }, ContextCompat.getMainExecutor(previewView.context))
 }
 
+// Take photo function
 private fun takePhoto(
     imageCapture: ImageCapture,
     outputDirectory: File,
@@ -299,47 +333,67 @@ private fun takePhoto(
     )
 }
 
-private suspend fun sendImageToApis(file: File, userId: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
-    val client = OkHttpClient()
-
-    // Fungsi untuk mengirim gambar ke satu API
-    fun sendToApi(apiUrl: String): String {
-        val fileBody = file.asRequestBody("image/jpeg".toMediaType())
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("user_id", userId)
-            .addFormDataPart("image", file.name, fileBody)
-            .build()
-
-        val request = Request.Builder()
-            .url(apiUrl)
-            .post(requestBody)
-            .build()
-
-        return try {
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: "No response from server"
-            if (!response.isSuccessful) {
-                Log.e("SendImageToApi", "Failed with status code: ${response.code}")
-                "Error: ${response.code} - $responseBody"
-            } else {
-                Log.d("SendImageToApi", "Response Body: $responseBody")
-                responseBody
-            }
-        } catch (e: Exception) {
-            Log.e("SendImageToApi", "Error: ${e.message}")
-            "Error: ${e.message}"
-        }
-    }
-
-    // Mengirim gambar ke kedua API
-    val responseKtp = sendToApi(API_URL_KTP)
-    val responsePaspor = sendToApi(API_URL_PASPOR)
-
-    return@withContext Pair(responseKtp, responsePaspor)
-
+// Create HTTP client function
+private fun createHttpClient(): OkHttpClient {
+    return OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS) // Adjust as needed
+        .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)   // Adjust as needed
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)    // Adjust as needed
+        .build()
 }
 
+// Send image to API function
+private suspend fun sendImageToApi(apiUrl: String, file: File, userId: String): String? = withContext(Dispatchers.IO) {
+    val client = createHttpClient()
+    val fileBody = file.asRequestBody("image/jpeg".toMediaType())
+    val requestBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("user_id", userId)
+        .addFormDataPart("image", file.name, fileBody)
+        .build()
 
+    val request = Request.Builder()
+        .url(apiUrl)
+        .post(requestBody)
+        .build()
 
+    return@withContext try {
+        val response = client.newCall(request).execute()
+        val responseBody = response.body?.string()
+        Log.d("SendImageToApi", "Status Code: ${response.code}")
+        Log.d("SendImageToApi", "Response Body: $responseBody")
+        if (!response.isSuccessful) {
+            Log.e("SendImageToApi", "Failed with status code: ${response.code}")
+            "Error: ${response.code} - ${response.message}"
+        } else {
+            responseBody ?: "No response from server"
+        }
+    } catch (e: Exception) {
+        Log.e("SendImageToApi", "Error: ${e.message}")
+        "Error: ${e.message}"
+    }
+}
 
+// Detect document type function
+private suspend fun detectDocumentType(imageUri: Uri, context: Context): String = withContext(Dispatchers.IO) {
+    val image = InputImage.fromFilePath(context, imageUri)
+    val options = TextRecognizerOptions.Builder().build()
+    val recognizer = TextRecognition.getClient(options)
+
+    return@withContext try {
+        val result = Tasks.await(recognizer.process(image))
+        val detectedText = result.text
+
+        // Log the detected text for debugging
+        Log.d("DetectDocumentType", "Detected text: $detectedText")
+
+        when {
+            detectedText.contains("NIK", ignoreCase = true) -> "KTP"
+            detectedText.contains("PASPOR", ignoreCase = true) -> "PASPOR"
+            else -> "UNKNOWN"
+        }
+    } catch (e: Exception) {
+        Log.e("DetectDocumentType", "Error detecting text", e)
+        "UNKNOWN"
+    }
+}

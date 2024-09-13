@@ -78,5 +78,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.10.0")
     implementation("com.squareup.okio:okio:3.0.0")
     implementation ("androidx.compose.material:material-icons-extended:1.4.3")
+    implementation ("com.google.android.gms:play-services-tasks:18.0.2")
+
 
 }
